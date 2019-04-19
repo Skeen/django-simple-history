@@ -1,6 +1,10 @@
 Changes
 =======
 
+Unreleased
+----------
+- Added official Django 2.2 support (gh-555)
+
 2.7.2 (2019-04-17)
 ------------------
 - Fixed ModuleNotFound issue for `six` (gh-553)
