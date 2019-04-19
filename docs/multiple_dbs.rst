@@ -45,12 +45,12 @@ Tracking History Separate from the Base Model
 You can choose whether or not to track models' history in the same database by
 setting the flag `use_base_model_db`.
 
-```
-class MyModel(models.Model):
-    ...
-    history = HistoricalRecords(use_base_model_db=False)
-```
+.. code-block:: python
 
-If set to `True`, migrations and audit
-events will be sent to the same database as the base model. If `False`, they
+    class MyModel(models.Model):
+        ...
+        history = HistoricalRecords(use_base_model_db=False)
+
+
+If set to `True`, migrations and audit events will be sent to the same database as the base model. If `False`, they
 will be sent to the place specified by the database router. The default value is `False`.
