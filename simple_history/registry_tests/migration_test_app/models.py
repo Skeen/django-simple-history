@@ -1,6 +1,4 @@
 from django.db import models
-from django.forms import IntegerField
-
 from simple_history.models import HistoricalRecords
 
 
@@ -14,7 +12,7 @@ class WhatIMean(DoYouKnow):
 
 class Yar(models.Model):
     what = models.ForeignKey(WhatIMean, on_delete=models.CASCADE)
-    history = HistoricalRecords(history_user_id_field=IntegerField())
+    history = HistoricalRecords()
 
 
 class CustomAttrNameForeignKey(models.ForeignKey):
@@ -36,4 +34,4 @@ class ModelWithCustomAttrForeignKey(models.Model):
     what_i_mean = CustomAttrNameForeignKey(
         WhatIMean, models.CASCADE, attr_name="custom_attr_name"
     )
-    history = HistoricalRecords(history_user_id_field=IntegerField())
+    history = HistoricalRecords()
