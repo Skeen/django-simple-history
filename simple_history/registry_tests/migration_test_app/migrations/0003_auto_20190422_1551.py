@@ -6,15 +6,16 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        (
-            "migration_test_app",
-            "0002_historicalmodelwithcustomattrforeignkey_modelwithcustomattrforeignkey",
-        )
+        ('migration_test_app', '0002_historicalmodelwithcustomattrforeignkey_modelwithcustomattrforeignkey'),
     ]
 
     operations = [
         migrations.RemoveField(
-            model_name="historicalmodelwithcustomattrforeignkey", name="history_user"
+            model_name='historicalmodelwithcustomattrforeignkey',
+            name='history_user',
         ),
-        migrations.RemoveField(model_name="historicalyar", name="history_user"),
+        migrations.RemoveField(
+            model_name='historicalyar',
+            name='history_user',
+        ),
     ]
