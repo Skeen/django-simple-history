@@ -1,8 +1,10 @@
 from __future__ import unicode_literals
 
+import shutil
 import unittest
 import uuid
 from datetime import datetime, timedelta
+from os.path import join, abspath, dirname
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -216,6 +218,10 @@ class TestMigrate(TestCase):
         management.call_command(
             "migrate", "migration_test_app", fake=True, stdout=StringIO()
         )
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(join(abspath(dirname(__file__)), "migration_test_app/migrations"))
 
 
 class TestModelWithHistoryInDifferentApp(TestCase):
