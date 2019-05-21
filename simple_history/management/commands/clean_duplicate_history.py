@@ -65,6 +65,97 @@ class Command(populate_history.Command):
             if not found:
                 continue
 
+            from django.db.models import Max
+            import math
+            max_id = m_qs.aggregate(Max('id'))['id__max']
+
+            history_fields = [
+                'id', 'history_id', 'history_date', 'history_change_reason', 'history_type', 'history_user',
+            ]
+            table_name = history_model._meta.db_table
+            data_fields = [
+                f.name for f in history_model._meta.get_fields()
+                if f.name not in history_fields
+            ]
+#            query = """
+#            SELECT history_id FROM (
+#                SELECT
+#                    history_id, id,
+#            """
+#            query += ",".join(["""
+#                {0} as field_{1},
+#                LEAD({0}) OVER(PARTITION BY id ORDER BY history_date DESC) as history_{1}
+#            """.format(value, idx) for (idx, value) in enumerate(data_fields)
+#            ])
+#            query += """
+#                FROM
+#                    {0}
+#                WHERE 
+#                    id >= %s AND id < %s
+#                ) AS sub_table
+#            WHERE
+#            """.format(table_name)
+#            query += " AND ".join(["""
+#                field_{0} = history_{0} OR (field_{0} is NULL AND history_{0} is NULL)
+#            """.format(idx) for (idx, value) in enumerate(data_fields)
+#            ])
+
+            from django.db.models import Window
+            from django.db.models.functions import Lead
+            from django.db.models import F, Q
+
+            # Delete history in blocks, to avoid locking issues
+            step_size = 10**5
+            max_iterations = int(math.ceil(max_id / step_size))
+            for x in range(0, max_iterations + 1):
+                with transaction.atomic(savepoint=True):
+                    # print(m_qs.raw(query, [x * step_size, (x + 1) * step_size]))
+                    # listy = list(m_qs.raw(query, [x * step_size, (x + 1) * step_size]))
+                    # print(listy)
+                    # m_qs.filter(pk__in=listy).delete()
+                    
+                    # Create blocks
+                    q = m_qs.filter(
+                        id__gt=x * step_size,
+                        id__lt=(x + 1) * step_size
+                    )
+                    # Windowing to see previous record via LEAD
+                    window = {
+                        'partition_by': [F('id')],
+                        'order_by': F('history_date').desc(),
+                    }
+                    q = q.annotate(
+                        # Alias fields for uniform access
+                        **{'field_' + str(idx): F(value) for (idx, value) in enumerate(data_fields)}
+                    ).annotate(
+                        # Find history fields
+                        **{'history_' + str(idx): Window(expression=Lead(value), **window)
+                            for (idx, value) in enumerate(data_fields)
+                        }
+                    )
+                    # NOTE: Doesn't handle nulls
+                    q = q.filter(
+                        **{'field_' + str(idx): F('history_' + str(idx))
+                            for (idx, _) in enumerate(data_fields)}
+                    )
+
+#                    # NOTE: django.db.utils.NotSupportedError: Window is disallowed in the filter clause.
+#                    q = q.filter(
+#                        *[
+#                            Q(
+#                                Q(**{'field_' + str(idx): F('history_' + str(idx))}) |
+#                                Q(**{
+#                                    'field_' + str(idx) + '__isnull': True,
+#                                    'history_' + str(idx) + '__isnull': True,
+#                                })
+#                            )
+#                            for (idx, value) in enumerate(data_fields)
+#                        ]
+#                    )
+
+                    print(q.values_list('pk', flat=True).query)
+                    m_qs.filter(pk__in=q.values_list('pk', flat=True)).delete()
+
             # it would be great if we could just iterate over the instances that
             # have changes (in the given period) but
             # `m_qs.values(model._meta.pk.name).distinct()`
