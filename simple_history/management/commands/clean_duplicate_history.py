@@ -1,9 +1,11 @@
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Max
 
 from . import populate_history
 from ... import models, utils
 from ...exceptions import NotHistoricalModelError
+import math
 
 
 class Command(populate_history.Command):
@@ -56,6 +58,10 @@ class Command(populate_history.Command):
         else:
             stop_date = None
 
+        history_fields = [
+            'id', 'history_id', 'history_date', 'history_change_reason',
+            'history_type', 'history_user',
+        ]
         for model, history_model in to_process:
             m_qs = history_model.objects
             if stop_date:
@@ -65,13 +71,9 @@ class Command(populate_history.Command):
             if not found:
                 continue
 
-            from django.db.models import Max
-            import math
+            # TODO: Handle stop_date
             max_id = m_qs.aggregate(Max('id'))['id__max']
 
-            history_fields = [
-                'id', 'history_id', 'history_date', 'history_change_reason', 'history_type', 'history_user',
-            ]
             table_name = history_model._meta.db_table
             data_fields = [
                 f.name for f in history_model._meta.get_fields()
@@ -80,7 +82,8 @@ class Command(populate_history.Command):
             query = """
             SELECT history_id FROM (
                 SELECT
-                    history_id, id,
+                    history_id,
+                    id,
             """
             query += ",".join(["""
                 {0} as field_{1},
@@ -100,10 +103,6 @@ class Command(populate_history.Command):
             """.format(idx) for (idx, value) in enumerate(data_fields)
             ])
 
-            from django.db.models import Window
-            from django.db.models.functions import Lead
-            from django.db.models import F, Q
-
             # Delete history in blocks, to avoid locking issues
             step_size = 10**5
             max_iterations = int(math.ceil(max_id / step_size))
@@ -119,113 +118,6 @@ class Command(populate_history.Command):
                 self.DONE_CLEANING_FOR_MODEL.format(model=model, count=entries_deleted)
             )
 
-
-                    
-#                    # Create blocks
-#                    q = m_qs.filter(
-#                        id__gt=x * step_size,
-#                        id__lt=(x + 1) * step_size
-#                    )
-#                    # Windowing to see previous record via LEAD
-#                    window = {
-#                        'partition_by': [F('id')],
-#                        'order_by': F('history_date').desc(),
-#                    }
-#                    q = q.annotate(
-#                        # Alias fields for uniform access
-#                        **{'field_' + str(idx): F(value) for (idx, value) in enumerate(data_fields)}
-#                    ).annotate(
-#                        # Find history fields
-#                        **{'history_' + str(idx): Window(expression=Lead(value), **window)
-#                            for (idx, value) in enumerate(data_fields)
-#                        }
-#                    )
-#
-#                    from django.db.models import Case, BooleanField, Value, When
-#                    q = q.annotate(
-#                        **{'field_ok_' + str(idx): Case(
-#                            When(**{'field_' + str(idx): F('history_' + str(idx))}, then=Value(True)),
-#                            default=Value(True),
-#                            output_field=BooleanField()
-#                        ) for (idx, _) in enumerate(data_fields)}
-#                    )
-#                    print(q.query)
-#                    # This yields: sqlite3.OperationalError: misuse of window function LEAD()
-#                    q = q.filter(
-#                        **{'field_' + str(idx): F('history_' + str(idx)) 
-#                            for (idx, value) in enumerate(data_fields)
-#                        }
-#                    )
-#
-#                    from django.db.models import Value, IntegerField
-#                    # NOTE: Hack to avoid: django.db.utils.NotSupportedError: Window is disallowed in the filter clause.
-#                    # NOTE: See below
-#                    q = q.annotate(
-#                        always_null=Value(None, output_field=IntegerField())
-#                    )
-#                    # The hack yields: sqlite3.OperationalError: misuse of window function LEAD()
-#                    for (idx, _) in enumerate(data_fields):
-#                        q = q.filter(
-#                            Q(**{'field_' + str(idx): F('history_' + str(idx))}) | Q(Q(always_null=F('field_' + str(idx))), Q(always_null=F('history_' + str(idx))))
-#                        )
-#
-#                    # NOTE: django.db.utils.NotSupportedError: Window is disallowed in the filter clause.
-#                    q = q.filter(
-#                        *[
-#                            Q(
-#                                Q(**{'field_' + str(idx): F('history_' + str(idx))}) |
-#                                Q(**{
-#                                    'field_' + str(idx) + '__isnull': True,
-#                                    'history_' + str(idx) + '__isnull': True,
-#                                })
-#                            )
-#                            for (idx, value) in enumerate(data_fields)
-#                        ]
-#                    )
-#
-#                    m_qs.filter(pk__in=q.values_list('pk', flat=True)).delete()
-
-            # it would be great if we could just iterate over the instances that
-            # have changes (in the given period) but
-            # `m_qs.values(model._meta.pk.name).distinct()`
-            # is actually slower than looping all and filtering in the code...
-#            for o in model.objects.all():
-#                self._process_instance(o, model, stop_date=stop_date, dry_run=dry_run)
-
-    def _process_instance(self, instance, model, stop_date=None, dry_run=True):
-        entries_deleted = 0
-        history = utils.get_history_manager_for_model(instance)
-        o_qs = history.all()
-        if stop_date:
-            # to compare last history match
-            extra_one = o_qs.filter(history_date__lte=stop_date).first()
-            o_qs = o_qs.filter(history_date__gte=stop_date)
-        else:
-            extra_one = None
-        with transaction.atomic():
-            # ordering is ('-history_date', '-history_id') so this is ok
-            f1 = o_qs.first()
-            if not f1:
-                return
-
-            for f2 in o_qs[1:]:
-                entries_deleted += self._check_and_delete(f1, f2, dry_run)
-                f1 = f2
-            if extra_one:
-                entries_deleted += self._check_and_delete(f1, extra_one, dry_run)
-
-        self.log(
-            self.DONE_CLEANING_FOR_MODEL.format(model=model, count=entries_deleted)
-        )
-
     def log(self, message, verbosity_level=1):
         if self.verbosity >= verbosity_level:
             self.stdout.write(message)
-
-    def _check_and_delete(self, entry1, entry2, dry_run=True):
-        delta = entry1.diff_against(entry2)
-        if not delta.changed_fields:
-            if not dry_run:
-                entry1.delete()
-            return 1
-        return 0
