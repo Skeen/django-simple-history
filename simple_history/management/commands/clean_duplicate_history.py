@@ -133,11 +133,16 @@ class Command(populate_history.Command):
                             for (idx, value) in enumerate(data_fields)
                         }
                     )
-                    # NOTE: Doesn't handle nulls
-                    q = q.filter(
-                        **{'field_' + str(idx): F('history_' + str(idx))
-                            for (idx, _) in enumerate(data_fields)}
+                    from django.db.models import Value, IntegerField
+                    # NOTE: Hack to avoid: django.db.utils.NotSupportedError: Window is disallowed in the filter clause.
+                    # NOTE: See below
+                    q = q.annotate(
+                        always_null=Value(None, output_field=IntegerField())
                     )
+                    for (idx, _) in enumerate(data_fields):
+                        q = q.filter(
+                            Q(**{'field_' + str(idx): F('history_' + str(idx))}) | Q(Q(always_null=F('field_' + str(idx))), Q(always_null=F('history_' + str(idx))))
+                        )
 
 #                    # NOTE: django.db.utils.NotSupportedError: Window is disallowed in the filter clause.
 #                    q = q.filter(
@@ -153,7 +158,6 @@ class Command(populate_history.Command):
 #                        ]
 #                    )
 
-                    print(q.values_list('pk', flat=True).query)
                     m_qs.filter(pk__in=q.values_list('pk', flat=True)).delete()
 
             # it would be great if we could just iterate over the instances that
